@@ -3,6 +3,8 @@
 
 # To Do
 # get loft to use rail
+# save solid loft elements until the end
+# do all the gouging at the end so there's no problem with normals once the surface has been gouged
 
 import adsk.core, adsk.fusion, adsk.cam, traceback
 import os
@@ -148,12 +150,14 @@ class command_executed (adsk.core.CommandEventHandler):
                     debug_print (f'OOOPS --- too much input')
 
             root_component = design.rootComponent
-            sketches = root_component.sketches
 
             debug_print (f'----------------- {input_sketch.name} -----------------')
             debug_print (f'face: {face.objectType}')
 
             parent_body = face.body
+            parent_component = parent_body.parentComponent
+
+            sketches = parent_component.sketches
 
             face_evaluator = face.evaluator
 
@@ -164,8 +168,12 @@ class command_executed (adsk.core.CommandEventHandler):
             sketch_fixed_splines = input_sketch.sketchCurves.sketchFixedSplines
             debug_print (f'Processing {sketch_fixed_splines.count} fixed splines')
 
+            rail_sketch = sketches.add (parent_component.xYConstructionPlane)
+            rail_sketch.name = 'rail sketch'
 
+            saved_rails = []
             i = 0
+
             for spline in sketch_fixed_splines:
 
                 # get the evaluator for this curve
@@ -176,18 +184,12 @@ class command_executed (adsk.core.CommandEventHandler):
 
                 # calculate mid_point in parametric space
                 mid_point_p = (start_p + end_p) * 0.5
-                debug_print (f'p values = {start_p:.2f}, {end_p:.2f}, {mid_point_p:.2f}')
 
                 # convert parameter coordinate into world coordinates for all three points
                 (status, mid_point_wc) = curve_evaluator.getPointAtParameter (mid_point_p)
 
                 # get endpoints in world coordinates
                 (status, start_point_wc, end_point_wc) = curve_evaluator.getEndPoints()
-
-                # print world corrdinates of points at beginning, middle and end of curve on the surface
-                debug_print_point ('start_point_wc', start_point_wc)
-                debug_print_point ('mid_point_wc', mid_point_wc)
-                debug_print_point ('end_point_wc', end_point_wc)
 
                 # get normals to surface at middle and both ends of curve
                 mid_normal = adsk.core.Vector3D.create ()   
@@ -197,10 +199,6 @@ class command_executed (adsk.core.CommandEventHandler):
 
                 (status, end_normal) = face_evaluator.getNormalAtPoint (end_point_wc)
 
-                # print normals to the surface at these 3 points                
-                debug_print (f'start normal = ({start_normal.x:.2f}, {start_normal.y:.2f}, {start_normal.z:.2f})')
-                debug_print (f'mid normal = ({mid_normal.x:.2f}, {mid_normal.y:.2f}, {mid_normal.z:.2f})')
-                debug_print (f'end normal = ({end_normal.x:.2f}, {end_normal.y:.2f}, {end_normal.z:.2f})')
 
                 # figure out depth of cut for middle of the curve; it's tool radius down along the midpoint normal
                 gouge_vector = adsk.core.Vector3D.create ()   
@@ -215,7 +213,7 @@ class command_executed (adsk.core.CommandEventHandler):
                 end_normal.scaleBy (tool_diameter * 0.5)
                 
                 # get construction planes collection
-                construction_planes = root_component.constructionPlanes
+                construction_planes = parent_component.constructionPlanes
                 plane_input = construction_planes.createInput()
 
                 # create construction plane at mid_point; function wants 0.5 not real parametric midpoint
@@ -243,6 +241,16 @@ class command_executed (adsk.core.CommandEventHandler):
                 start_p0 = surface_loft_sketch.modelToSketchSpace (start_point_wc)
                 mid_p0 = surface_loft_sketch.modelToSketchSpace (mid_point_wc)
                 end_p0 = surface_loft_sketch.modelToSketchSpace (end_point_wc)
+
+                test_p0 = rail_sketch.modelToSketchSpace (start_point_wc)
+
+                # print world corrdinates of points at beginning, middle and end of curve on the surface
+                debug_print_point ('start_point_wc', start_point_wc)
+                debug_print_point ('start_p0', start_p0)
+                debug_print_point ('test_p0', test_p0)
+
+                debug_print_point ('mid_point_wc', mid_point_wc)
+                debug_print_point ('end_point_wc', end_point_wc)
 
                 # add normal at both ends 
                 start_p1_wc = adsk.core.Point3D.create ()                    
@@ -291,6 +299,10 @@ class command_executed (adsk.core.CommandEventHandler):
                 surface_loft_feature.bodies.item(0).name = f'surface {i}'                                
 
                 surface_loft_face = surface_loft_feature.faces.item(0)
+                debug_print (f'surface has face with {surface_loft_face.edges.count} edges')
+                edge0 = surface_loft_face.edges.item(0)
+
+
 
                 # create toolpath sketch
                 toolpath_sketch = sketches.add (construction_plane)
@@ -325,6 +337,9 @@ class command_executed (adsk.core.CommandEventHandler):
                     status = s0.deleteMe()
                     rail = s1
                     debug_print (f'delete s0 status = {status}')
+
+                saved_rails.append (edge0.geometry.copy())
+
 
                 debug_print (f'toolpath count: {toolpath_sketch.sketchCurves.count}')
                 debug_print (f'toolpath curve length: {toolpath_sketch.sketchCurves.item(0).length:.3f}')
@@ -450,6 +465,13 @@ class command_executed (adsk.core.CommandEventHandler):
 
 
                 i = i + 1
+            
+
+
+
+            for r in saved_rails:
+                rail_sketch.sketchCurves.sketchFixedSplines.addByNurbsCurve (r)
+
         except:
             ui.messageBox('Failed:\n{}'.format(traceback.format_exc()))	
 
