@@ -144,6 +144,7 @@ class command_executed (adsk.core.CommandEventHandler):
                 elif (input.id == 'tool_diameter'):
                     tool_diameter = input.value    
                     tool_radius = tool_diameter * 0.5
+                    debug_print (f'tool diameter = {tool_diameter:.3f} cm')
                 elif (input.id == 'use_rail'):
                     use_rail = input.value           
                 elif (input.id == 'debug'):
@@ -181,8 +182,12 @@ class command_executed (adsk.core.CommandEventHandler):
             saved_rails = []
             profiles = []
 
-            i = 0
+            # rail sketch should exist in the same coordinate system as the parent component of the face chosen
+            rail_sketch = sketches.add (parent_component.xYConstructionPlane)
+            rail_sketch.name = 'rail sketch'
 
+            i = 0
+            
             for spline in sketch_fixed_splines:
                 tmp_sketch = sketches.add (parent_component.xYConstructionPlane)
                 tmp_sketch.name = f'tmp sketch {i}'
@@ -192,15 +197,30 @@ class command_executed (adsk.core.CommandEventHandler):
 
                 # get the parametric endpoints
                 (status, start_p, end_p) = curve_evaluator.getParameterExtents()
-
+                debug_print (f'start_p = {start_p:.2f}')
+                debug_print (f'end_p = {end_p:.2f}')
+                
                 # calculate mid_point in parametric space
                 mid_p = (start_p + end_p) * 0.5
+                debug_print (f'mid_p = {mid_p:.2f}')
+
+                # calculate mid_point in cartesian space
+                (status, length) = curve_evaluator.getLengthAtParameter (0.0, 1.0)
+                (status, ppp) = curve_evaluator.getParameterAtLength (0.0, length * 0.5)
+
 
                 # convert parameter into cartesian coordinates for all three points
                 (status, mid_p0) = curve_evaluator.getPointAtParameter (mid_p)
+                debug_print_point ('mid_p0', mid_p0)
+
+                (status, mid_p0) = curve_evaluator.getPointAtParameter (ppp)
+                debug_print (f'ppp = {ppp:.3f}')
+                debug_print_point ('mid_p0', mid_p0)
 
                 # get endpoints in cartesian coordinates
                 (status, start_p0, end_p0) = curve_evaluator.getEndPoints()
+                debug_print_point ('start_p0', start_p0)
+                debug_print_point ('end_p0', end_p0)
 
                 # get normals to surface at middle and both ends of curve
                 (status, start_normal) = face_evaluator.getNormalAtPoint (start_p0)
@@ -226,6 +246,11 @@ class command_executed (adsk.core.CommandEventHandler):
                 mid_p1.x = mid_p0.x + gouge_vector.x 
                 mid_p1.y = mid_p0.y + gouge_vector.y 
                 mid_p1.z = mid_p0.z + gouge_vector.z 
+
+                mid_p2 = adsk.core.Point3D.create ()                    
+                mid_p2.x = mid_p0.x - gouge_vector.x 
+                mid_p2.y = mid_p0.y - gouge_vector.y 
+                mid_p2.z = mid_p0.z - gouge_vector.z 
 
                 # add normal at start
                 start_p1 = adsk.core.Point3D.create ()                    
@@ -298,14 +323,17 @@ class command_executed (adsk.core.CommandEventHandler):
                 # create construction plane at beginning and end of path
                 plane_input.setByDistanceOnPath (spline, adsk.core.ValueInput.createByReal(0.0))
                 start_construction_plane = construction_planes.add (plane_input)
+                start_construction_plane.name = (f'start {i}')
                 
                 # create construction plane at beginning of path
                 plane_input.setByDistanceOnPath (spline, adsk.core.ValueInput.createByReal(0.5))
                 mid_construction_plane = construction_planes.add (plane_input)
+                mid_construction_plane.name = (f'mid {i}')
 
                 # create construction plane at end of path
                 plane_input.setByDistanceOnPath (spline, adsk.core.ValueInput.createByReal(1.0))
                 end_construction_plane = construction_planes.add (plane_input)
+                end_construction_plane.name = (f'end {i}')
 
                 # create a sketch on each of the newly created construction planes
                 tmp_start_sketch = sketches.add (start_construction_plane)
@@ -326,8 +354,31 @@ class command_executed (adsk.core.CommandEventHandler):
                 included_circle.isReference = False
 
 
-                mid_p0_local = tmp_mid_sketch.modelToSketchSpace (mid_p0)
-                tmp_circle = tmp_mid_sketch.sketchCurves.sketchCircles.addByCenterRadius (mid_p0_local, tool_radius)
+                mid_p1_local = tmp_mid_sketch.modelToSketchSpace (mid_p1)
+                mid_p2_local = tmp_mid_sketch.modelToSketchSpace (mid_p2)
+                
+                tmp_sketch.sketchPoints.add (mid_p1)
+                tmp_sketch.sketchPoints.add (mid_p2)
+
+                debug_print_point ('mid p1', mid_p1)
+                debug_print_point ('mid p1 local', mid_p1_local)                
+                debug_print_point ('mid p2', mid_p2)
+                debug_print_point ('mid p2 local', mid_p2_local)
+                
+                # need to ensure tangent point is on curve
+                # add the toolpath curve to the rail sketch
+                toolpath = rail_sketch.sketchCurves.sketchFixedSplines.addByNurbsCurve (saved_rails[i])
+
+                entities = []
+                entities.append (toolpath)
+
+                # intersection should be a single sketch point; could be multiple if curve wraps has high curvature
+                sketch_entities = tmp_mid_sketch.intersectWithSketchPlane(entities)
+
+
+                debug_print_point ('intersection pt', sketch_entities[0].geometry)
+
+                tmp_circle = tmp_mid_sketch.sketchCurves.sketchCircles.addByTwoPoints (mid_p2_local, sketch_entities[0].geometry)
                 included_entities = circles_sketch.include (tmp_circle)
                 included_circle = included_entities.item(0)
                 included_circle.isReference = False
@@ -339,36 +390,30 @@ class command_executed (adsk.core.CommandEventHandler):
                 included_circle.isReference = False
     
                 debug_print (f'circles sketch has {circles_sketch.profiles.count} profile(s)')
-                for p in circles_sketch.profiles:
-                    debug_print (f'profile token = {p.entityToken}')
-                    debug_print (f'profile attribute = {p.attributes.count}')
-                    
-                debug_print (f'---------------')
+
                     
                 # delete sketches and their construction plane
-                tmp_start_sketch.deleteMe()
-                start_construction_plane.deleteMe()
+                #tmp_start_sketch.deleteMe()
+                #start_construction_plane.deleteMe()
 
-                tmp_mid_sketch.deleteMe()
-                mid_construction_plane.deleteMe()
+                #tmp_mid_sketch.deleteMe()
+                #mid_construction_plane.deleteMe()
 
-                tmp_end_sketch.deleteMe()
-                end_construction_plane.deleteMe()
+                #tmp_end_sketch.deleteMe()
+                #end_construction_plane.deleteMe()
 
-                tmp_sketch.deleteMe()
+                #tmp_sketch.deleteMe()
 
                 i = i + 1
             
 
             # take the saved rails and the saved circles and create lofts that gouge the surface
                 
-            # rail sketch should exist in the same coordinate system as the parent component of the face chosen
-            rail_sketch = sketches.add (parent_component.xYConstructionPlane)
-            rail_sketch.name = 'rail sketch'
+
 
             # add all the saved rails (NURBs curves) and put them into the rail sketch                
-            for r in saved_rails:
-                rail_sketch.sketchCurves.sketchFixedSplines.addByNurbsCurve (r)
+            #for r in saved_rails:
+            #    rail_sketch.sketchCurves.sketchFixedSplines.addByNurbsCurve (r)
 
             debug_print (f'rail sketch has {rail_sketch.sketchCurves.count} curve(s)')
             debug_print (f'circles sketch has {circles_sketch.sketchCurves.count} curve(s)')
@@ -382,9 +427,12 @@ class command_executed (adsk.core.CommandEventHandler):
                 solid_loft_input = solid_loft_features.createInput(adsk.fusion.FeatureOperations.CutFeatureOperation)
                 solid_loft_input.isSolid = True
 
-                start_circle_profile = circles_sketch.profiles.item (i * 3)
-                middle_circle_profile = circles_sketch.profiles.item ((i * 3) + 1)
-                end_circle_profile = circles_sketch.profiles.item ((i * 3) + 2)
+                tmp_start_sketch = sketches.itemByName (f'tmp start sketch {i}')
+                tmp_mid_sketch = sketches.itemByName (f'tmp mid sketch {i}')
+                tmp_end_sketch = sketches.itemByName (f'tmp end sketch {i}')
+                start_circle_profile = tmp_start_sketch.profiles.item(0)
+                middle_circle_profile = tmp_mid_sketch.profiles.item(0)
+                end_circle_profile = tmp_end_sketch.profiles.item(0)
 
                 solid_loft_sections = solid_loft_input.loftSections
                 solid_loft_sections.add(start_circle_profile)
@@ -392,7 +440,7 @@ class command_executed (adsk.core.CommandEventHandler):
                 solid_loft_sections.add(end_circle_profile)
 
                 if use_rail:
-                    solid_loft_input.centerLineOrRails.addRail (r)
+                    solid_loft_input.centerLineOrRails.addCenterLine (r)
 
                 participant_bodies = []
                 participant_bodies.append (parent_body)
