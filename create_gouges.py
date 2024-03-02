@@ -440,7 +440,8 @@ class command_executed (adsk.core.CommandEventHandler):
                 solid_loft_sections.add(end_circle_profile)
 
                 if use_rail:
-                    solid_loft_input.centerLineOrRails.addCenterLine (r)
+                    #solid_loft_input.centerLineOrRails.addCenterLine (r)
+                    solid_loft_input.centerLineOrRails.addRail (r)
 
                 participant_bodies = []
                 participant_bodies.append (parent_body)
