@@ -182,13 +182,17 @@ class command_executed (adsk.core.CommandEventHandler):
 
             debug_print ('------------------------------------')
 
-            origin = adsk.core.Point3D.create (0.0, 0.0, 0.0)                    
+            # tmp_vector will be used to calculate distance along projected normals to define circle
+            tmp_vector = adsk.core.Vector3D.create ()
+            start_p1 = adsk.core.Point3D.create ()                    
+            mid_p1 = adsk.core.Point3D.create ()                    
+            end_p1 = adsk.core.Point3D.create ()                    
+            mid_p2 = adsk.core.Point3D.create ()                    
+
 
             i = 0
-            
             for spline in sketch_fixed_splines:
                 debug_print (f'Processing spline {i}')
-
 
                 tmp_sketch = sketches.add (parent_component.xYConstructionPlane)
                 tmp_sketch.name = f'tmp sketch {i}'
@@ -199,6 +203,9 @@ class command_executed (adsk.core.CommandEventHandler):
                 # get the parametric endpoints
                 (status, start_p, end_p) = curve_evaluator.getParameterExtents()                
 
+                # get endpoints in cartesian coordinates
+                (status, start_p0, end_p0) = curve_evaluator.getEndPoints()
+
                 # calculate mid_point in cartesian space
                 (status, length) = curve_evaluator.getLengthAtParameter (start_p, end_p)
                 (status, mid_p) = curve_evaluator.getParameterAtLength (start_p, length * 0.5)
@@ -207,16 +214,7 @@ class command_executed (adsk.core.CommandEventHandler):
                 # convert parameter into cartesian coordinates for all three points
                 (status, mid_p0) = curve_evaluator.getPointAtParameter (mid_p)
 
-                # get endpoints in cartesian coordinates
-                (status, start_p0, end_p0) = curve_evaluator.getEndPoints()
-                debug_print_point ('start_p0', start_p0)
-                debug_print_point ('mid p0', mid_p0)
-                debug_print_point ('end_p0', end_p0)
-
-                # get normals to surface at middle and both ends of curve
-                (status, start_normal) = face_evaluator.getNormalAtPoint (start_p0)
                 (status, mid_normal) = face_evaluator.getNormalAtPoint (mid_p0)
-                (status, end_normal) = face_evaluator.getNormalAtPoint (end_p0)
 
                 # figure out depth of cut for middle of the curve; it's tool radius down along the midpoint normal
                 gouge_vector = adsk.core.Vector3D.create ()   
@@ -225,38 +223,15 @@ class command_executed (adsk.core.CommandEventHandler):
                 gouge_vector.y = -mid_normal.y * tool_radius
                 gouge_vector.z = -mid_normal.z * tool_radius
                 
-                # scale endpoint normals by tool radius -- then circular profiles should be centered on end of these scaled normals and the toolpath curve should be tangent to the circle
-                start_normal.scaleBy (tool_diameter)
-                end_normal.scaleBy (tool_diameter)
-                
-                # this is the bottom of the gouge at the parametric midpoint
-                # p0 will be on the orginal surface curve
-                # p1 will be above for the endpoints and below for the midpoint
-                # p2 will be above for midpoint since we need it for defining middle circular profile
-
                 # point in middle of curve at depth of gouge
-                mid_p1 = adsk.core.Point3D.create ()                    
                 mid_p1.x = mid_p0.x + gouge_vector.x 
                 mid_p1.y = mid_p0.y + gouge_vector.y 
                 mid_p1.z = mid_p0.z + gouge_vector.z 
 
                 # point in middle of curve one diameter above the bottom of the gouge
-                mid_p2 = adsk.core.Point3D.create ()                    
                 mid_p2.x = mid_p0.x - gouge_vector.x 
                 mid_p2.y = mid_p0.y - gouge_vector.y 
                 mid_p2.z = mid_p0.z - gouge_vector.z 
-
-                # add normal at start
-                start_p1 = adsk.core.Point3D.create ()                    
-                start_p1.x = start_p0.x + start_normal.x
-                start_p1.y = start_p0.y + start_normal.y
-                start_p1.z = start_p0.z + start_normal.z
-
-                # add normal at end
-                end_p1 = adsk.core.Point3D.create ()                    
-                end_p1.x = end_p0.x + end_normal.x
-                end_p1.y = end_p0.y + end_normal.y
-                end_p1.z = end_p0.z + end_normal.z
 
                 # have the six critical points in start_p0, mid_p0, end_p0 and start_p1, mid_p1, end_p1
                 tmp_sketch_points = tmp_sketch.sketchPoints
@@ -306,21 +281,42 @@ class command_executed (adsk.core.CommandEventHandler):
                 # add the toolpath curve to the rail sketch
                 toolpath = rail_sketch.sketchCurves.sketchFixedSplines.addByNurbsCurve (saved_rails[i])
 
-                (status, toolpath_start, toolpath_end) = toolpath.evaluator.getEndPoints()
-                debug_print_point ('toolpath_start', toolpath_start)
-                debug_print_point ('toolpath_end', toolpath_end)
-
-
+                # get rid of the surface loft
                 surface_loft_feature.deleteMe()
 
-                # make three temporary construction planes and sketches along the path
+                debug_print (f'processing toolpath {i} to create circular profiles')
+                
+                # get the parametric endpoints
+                (status, start_p, end_p) = toolpath.evaluator.getParameterExtents()                    
+                
+                # get endpoints in cartesian coordinates
+                (status, start_p0, end_p0) = toolpath.evaluator.getEndPoints()
 
-                # create construction plane at beginning and end of path
+
+                # calculate mid_point in cartesian space
+                (status, length) = toolpath.evaluator.getLengthAtParameter (start_p, end_p)
+                (status, mid_p) = toolpath.evaluator.getParameterAtLength (start_p, length * 0.5)
+                debug_print (f'p = {start_p:.2f} to {mid_p:.2f} to {end_p:.2f}')
+
+                # convert parameter into cartesian coordinates for all midpoint
+                (status, mid_p0) = toolpath.evaluator.getPointAtParameter (mid_p)
+                debug_print_point ('start_p0', start_p0)
+                debug_print_point ('mid_p0', mid_p0)
+                debug_print_point ('end_p0', end_p0)
+
+                # get normals to surface at middle and both ends of curve
+                (status, start_normal) = face_evaluator.getNormalAtPoint (start_p0)
+                (status, mid_normal) = face_evaluator.getNormalAtPoint (mid_p0)
+                (status, end_normal) = face_evaluator.getNormalAtPoint (end_p0)
+
+                # make three temporary construction planes and sketches along the toolpath
+
+                # create construction plane at beginning of path
                 plane_input.setByDistanceOnPath (toolpath, adsk.core.ValueInput.createByReal(0.0))
                 start_construction_plane = construction_planes.add (plane_input)
                 start_construction_plane.name = (f'start {i}')
 
-                # create construction plane at beginning of path
+                # create construction plane at middle of path
                 plane_input.setByDistanceOnPath (toolpath, adsk.core.ValueInput.createByReal(0.5))
                 mid_construction_plane = construction_planes.add (plane_input)
                 mid_construction_plane.name = (f'mid {i}')
@@ -333,14 +329,6 @@ class command_executed (adsk.core.CommandEventHandler):
                 # create a sketch on each of the newly created construction planes
                 start_sketch = sketches.add (start_construction_plane)
                 start_sketch.name = f'start sketch {i}'
-                x_direction = start_sketch.xDirection
-                debug_print_point ('x direction: ', x_direction)
-                y_direction = start_sketch.yDirection
-                debug_print_point ('y direction: ', y_direction)
-                implied_z_vector = x_direction.crossProduct(y_direction)
-                debug_print_point ('cross: ', implied_z_vector)
-                debug_print_point ('sketch normal ', start_sketch.referencePlane.geometry.normal)
-                
 
                 mid_sketch = sketches.add (mid_construction_plane)
                 mid_sketch.name = f'mid sketch {i}'
@@ -348,70 +336,100 @@ class command_executed (adsk.core.CommandEventHandler):
                 end_sketch = sketches.add (end_construction_plane)
                 end_sketch.name = f'end sketch {i}'
 
-                mid_p0_tmp = tmp_sketch.modelToSketchSpace (mid_p0)
-                mid_p2_tmp = tmp_sketch.modelToSketchSpace (mid_p2)
-
-                end_p0_tmp = tmp_sketch.modelToSketchSpace (end_p0)
-                end_p1_tmp = tmp_sketch.modelToSketchSpace (end_p1)
 
 
-                # add the circles at the three points and include the three circles into circles sketch
-
-                # add circle at start of curve
+                # make normal at start_point into sketch line and project it into start_sketch
                 start_p0_local = start_sketch.modelToSketchSpace (start_p0)
-                start_p1_local = start_sketch.modelToSketchSpace (start_p1)
-                start_p0_local.z = 0.0
-                start_p1_local.z = 0.0
 
-                start_sketch.sketchPoints.add (start_p0_local)
-                start_sketch.sketchPoints.add (start_p1_local)
+                start_normal_point = adsk.core.Point3D.create()
+                start_normal_point.x = start_p0.x + start_normal.x
+                start_normal_point.y = start_p0.y + start_normal.y
+                start_normal_point.z = start_p0.z + start_normal.z
 
-                debug_print_point ('start p0 local', start_p0_local)
-                debug_print_point ('start p1 local', start_p1_local)
-                check_distance = app.measureManager.measureMinimumDistance (toolpath, start_p0).value
-                debug_print (f'start_p0 to toolpath: {check_distance:.4f}')  
-
-
-                #tmp_circle = start_sketch.sketchCurves.sketchCircles.addByCenterRadius (start_p1_local, tool_radius)
-                tmp_circle = start_sketch.sketchCurves.sketchCircles.addByTwoPoints (start_p0_local, start_p1_local)
-                check_distance = app.measureManager.measureMinimumDistance (toolpath, tmp_circle).value
-                debug_print (f'start circle to toolpath: {check_distance:.4f}')                
-                check_distance = app.measureManager.measureMinimumDistance (toolpath, start_sketch.originPoint.geometry).value
-                debug_print (f'sketch origin to toolpath: {check_distance:.4f}')
-
-                # convert to sketch coordinates before using to define middle circle
-                mid_p1_local = mid_sketch.modelToSketchSpace (mid_p1)
-                mid_p2_local = mid_sketch.modelToSketchSpace (mid_p2)                
+                start_normal_point_local = start_sketch.modelToSketchSpace (start_normal_point)
+                tmp_point = start_sketch.sketchPoints.add (start_normal_point_local)
 
                 entities = []
-                entities.append (toolpath)
+                entities = start_sketch.project (tmp_point)
+                projected_start_normal = entities[0]
+                tmp_point.isReference = False
 
-                # intersection should be a single sketch point; could be multiple if curve wraps has high curvature
-                sketch_entities = mid_sketch.intersectWithSketchPlane(entities)
+                tmp_vector.x = projected_start_normal.geometry.x - start_p0_local.x
+                tmp_vector.y = projected_start_normal.geometry.y - start_p0_local.y
+                tmp_vector.z = projected_start_normal.geometry.z - start_p0_local.z
 
-                debug_print_point ('intersection pt', sketch_entities[0].geometry)
+                tmp_vector.scaleBy (tool_diameter / tmp_vector.length )
 
-                #tmp_circle = mid_sketch.sketchCurves.sketchCircles.addByTwoPoints (mid_p2_local, sketch_entities[0].geometry)
-                tmp_circle = mid_sketch.sketchCurves.sketchCircles.addByTwoPoints (mid_sketch.originPoint.geometry, mid_p2_local)
-                check_distance = app.measureManager.measureMinimumDistance (toolpath, tmp_circle).value
-                debug_print (f'mid circle to toolpath: {check_distance:.4f}')
+                start_p1_local = adsk.core.Point3D.create()
+                start_p1_local.x = start_p0_local.x + tmp_vector.x
+                start_p1_local.y = start_p0_local.y + tmp_vector.y
+                start_p1_local.z = start_p0_local.z + tmp_vector.z
 
-                #check_distance = app.measureManager.measureMinimumDistance (tmp_circle, mid_p1).value
+                start_sketch.sketchCurves.sketchCircles.addByTwoPoints (start_p0_local, start_p1_local)
 
+               # make normal at mid_point into sketch line and project it into mid_sketch
+                mid_p0_local = mid_sketch.modelToSketchSpace (mid_p0)
+
+                mid_normal_point = adsk.core.Point3D.create()
+                mid_normal_point.x = mid_p0.x + mid_normal.x
+                mid_normal_point.y = mid_p0.y + mid_normal.y
+                mid_normal_point.z = mid_p0.z + mid_normal.z
+
+                mid_normal_point_local = mid_sketch.modelToSketchSpace (mid_normal_point)
+                tmp_point = mid_sketch.sketchPoints.add (mid_normal_point_local)
+
+                entities = []
+                entities = mid_sketch.project (tmp_point)
+                projected_mid_normal = entities[0]
+                tmp_point.isReference = False
+
+                tmp_vector.x = projected_mid_normal.geometry.x - mid_p0_local.x
+                tmp_vector.y = projected_mid_normal.geometry.y - mid_p0_local.y
+                tmp_vector.z = projected_mid_normal.geometry.z - mid_p0_local.z
+
+                tmp_vector.scaleBy (tool_diameter / tmp_vector.length )
+
+                mid_p1_local = adsk.core.Point3D.create()
+                mid_p1_local.x = mid_p0_local.x + tmp_vector.x
+                mid_p1_local.y = mid_p0_local.y + tmp_vector.y
+                mid_p1_local.z = mid_p0_local.z + tmp_vector.z
+
+                mid_sketch.sketchCurves.sketchCircles.addByTwoPoints (mid_p0_local, mid_p1_local)
+
+               # make normal at end_point into sketch line and project it into end_sketch
                 end_p0_local = end_sketch.modelToSketchSpace (end_p0)
-                end_p1_local = end_sketch.modelToSketchSpace (end_p1)
-                end_p0_local.z = 0.0
-                end_p1_local.z = 0.0
 
-                tmp_circle = end_sketch.sketchCurves.sketchCircles.addByTwoPoints (end_sketch.originPoint.geometry, end_p1_local)
-                check_distance = app.measureManager.measureMinimumDistance (toolpath, tmp_circle).value
-                debug_print (f'end circle to toolpath: {check_distance:.4f}')
+                end_normal_point = adsk.core.Point3D.create()
+                end_normal_point.x = end_p0.x + end_normal.x
+                end_normal_point.y = end_p0.y + end_normal.y
+                end_normal_point.z = end_p0.z + end_normal.z
+
+                end_normal_point_local = end_sketch.modelToSketchSpace (end_normal_point)
+                tmp_point = end_sketch.sketchPoints.add (end_normal_point_local)
+
+                entities = []
+                entities = end_sketch.project (tmp_point)
+                projected_end_normal = entities[0]
+                tmp_point.isReference = False
+
+
+                tmp_vector.x = projected_end_normal.geometry.x - end_p0_local.x
+                tmp_vector.y = projected_end_normal.geometry.y - end_p0_local.y
+                tmp_vector.z = projected_end_normal.geometry.z - end_p0_local.z
+
+                tmp_vector.scaleBy (tool_diameter / tmp_vector.length )
+
+                end_p1_local = adsk.core.Point3D.create()
+                end_p1_local.x = end_p0_local.x + tmp_vector.x
+                end_p1_local.y = end_p0_local.y + tmp_vector.y
+                end_p1_local.z = end_p0_local.z + tmp_vector.z
+
+                end_sketch.sketchCurves.sketchCircles.addByTwoPoints (end_p0_local, end_p1_local)
 
                 tmp_sketch.deleteMe()
 
                 i = i + 1
             
-
             # take the saved rails and the circles in the sketches to create lofts that gouge the surface
                 
             debug_print (f'rail sketch has {rail_sketch.sketchCurves.count} curve(s)')
@@ -440,9 +458,6 @@ class command_executed (adsk.core.CommandEventHandler):
                 solid_loft_sections.add(middle_circle_profile)
                 solid_loft_sections.add(end_circle_profile)
 
-                # not sure which is better to use; interactively it suggests center line if you have one rail
-
-                #solid_loft_input.centerLineOrRails.addCenterLine (r)
                 solid_loft_input.centerLineOrRails.addRail (r)
 
                 participant_bodies = []
@@ -465,9 +480,15 @@ class command_executed (adsk.core.CommandEventHandler):
                     elif health_state == adsk.fusion.FeatureHealthStates.ErrorFeatureHealthState:
                         error = solid_loft_feature.errorOrWarningMessage
                         debug_print (f'error: {error}')
-                    
+                
+                # clean up a little
+                start_sketch.isVisible = False
+                mid_sketch.isVisible = False
+                end_sketch.isVisible = False
+                
                 i = i + 1
-            
+
+            rail_sketch.isVisible = False
         except:
             ui.messageBox('Failed:\n{}'.format(traceback.format_exc()))	
 
