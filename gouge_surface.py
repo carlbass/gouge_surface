@@ -32,7 +32,7 @@ def run(context):
         # Get the CommandDefinitions collection so we can add a command
         command_definitions = ui.commandDefinitions
         
-        tooltip = 'Maps lines, arcs and fitted splines from sketch to surface'
+        tooltip = 'Gouge the surface along sketch curves'
 
         # Create a button command definition.
         gouge_button = command_definitions.addButtonDefinition('gouge_surface', 'Gouge surface', tooltip, resource_folder)
@@ -184,10 +184,15 @@ class command_executed (adsk.core.CommandEventHandler):
 
             # tmp_vector will be used to calculate distance along projected normals to define circle
             tmp_vector = adsk.core.Vector3D.create ()
-            start_p1 = adsk.core.Point3D.create ()                    
+
+            # these points will be used in the calculate for each gouge; just allocate them once
             mid_p1 = adsk.core.Point3D.create ()                    
-            end_p1 = adsk.core.Point3D.create ()                    
-            mid_p2 = adsk.core.Point3D.create ()                    
+            start_normal_point = adsk.core.Point3D.create()
+            mid_normal_point = adsk.core.Point3D.create()
+            end_normal_point = adsk.core.Point3D.create()
+            start_p1_local = adsk.core.Point3D.create()
+            mid_p1_local = adsk.core.Point3D.create()
+            end_p1_local = adsk.core.Point3D.create()
 
 
             i = 0
@@ -228,12 +233,6 @@ class command_executed (adsk.core.CommandEventHandler):
                 mid_p1.y = mid_p0.y + gouge_vector.y 
                 mid_p1.z = mid_p0.z + gouge_vector.z 
 
-                # point in middle of curve one diameter above the bottom of the gouge
-                mid_p2.x = mid_p0.x - gouge_vector.x 
-                mid_p2.y = mid_p0.y - gouge_vector.y 
-                mid_p2.z = mid_p0.z - gouge_vector.z 
-
-                # have the six critical points in start_p0, mid_p0, end_p0 and start_p1, mid_p1, end_p1
                 tmp_sketch_points = tmp_sketch.sketchPoints
                 tmp_sketch_lines = tmp_sketch.sketchCurves.sketchLines
 
@@ -292,7 +291,6 @@ class command_executed (adsk.core.CommandEventHandler):
                 # get endpoints in cartesian coordinates
                 (status, start_p0, end_p0) = toolpath.evaluator.getEndPoints()
 
-
                 # calculate mid_point in cartesian space
                 (status, length) = toolpath.evaluator.getLengthAtParameter (start_p, end_p)
                 (status, mid_p) = toolpath.evaluator.getParameterAtLength (start_p, length * 0.5)
@@ -300,16 +298,13 @@ class command_executed (adsk.core.CommandEventHandler):
 
                 # convert parameter into cartesian coordinates for all midpoint
                 (status, mid_p0) = toolpath.evaluator.getPointAtParameter (mid_p)
-                debug_print_point ('start_p0', start_p0)
-                debug_print_point ('mid_p0', mid_p0)
-                debug_print_point ('end_p0', end_p0)
 
-                # get normals to surface at middle and both ends of curve
+                # get normals to surface at middle and both ends of toolpath curve
                 (status, start_normal) = face_evaluator.getNormalAtPoint (start_p0)
                 (status, mid_normal) = face_evaluator.getNormalAtPoint (mid_p0)
                 (status, end_normal) = face_evaluator.getNormalAtPoint (end_p0)
 
-                # make three temporary construction planes and sketches along the toolpath
+                # make three temporary construction planes and sketches along the toolpath curve
 
                 # create construction plane at beginning of path
                 plane_input.setByDistanceOnPath (toolpath, adsk.core.ValueInput.createByReal(0.0))
@@ -336,12 +331,9 @@ class command_executed (adsk.core.CommandEventHandler):
                 end_sketch = sketches.add (end_construction_plane)
                 end_sketch.name = f'end sketch {i}'
 
-
-
                 # make normal at start_point into sketch line and project it into start_sketch
                 start_p0_local = start_sketch.modelToSketchSpace (start_p0)
 
-                start_normal_point = adsk.core.Point3D.create()
                 start_normal_point.x = start_p0.x + start_normal.x
                 start_normal_point.y = start_p0.y + start_normal.y
                 start_normal_point.z = start_p0.z + start_normal.z
@@ -360,7 +352,6 @@ class command_executed (adsk.core.CommandEventHandler):
 
                 tmp_vector.scaleBy (tool_diameter / tmp_vector.length )
 
-                start_p1_local = adsk.core.Point3D.create()
                 start_p1_local.x = start_p0_local.x + tmp_vector.x
                 start_p1_local.y = start_p0_local.y + tmp_vector.y
                 start_p1_local.z = start_p0_local.z + tmp_vector.z
@@ -370,7 +361,6 @@ class command_executed (adsk.core.CommandEventHandler):
                # make normal at mid_point into sketch line and project it into mid_sketch
                 mid_p0_local = mid_sketch.modelToSketchSpace (mid_p0)
 
-                mid_normal_point = adsk.core.Point3D.create()
                 mid_normal_point.x = mid_p0.x + mid_normal.x
                 mid_normal_point.y = mid_p0.y + mid_normal.y
                 mid_normal_point.z = mid_p0.z + mid_normal.z
@@ -389,7 +379,6 @@ class command_executed (adsk.core.CommandEventHandler):
 
                 tmp_vector.scaleBy (tool_diameter / tmp_vector.length )
 
-                mid_p1_local = adsk.core.Point3D.create()
                 mid_p1_local.x = mid_p0_local.x + tmp_vector.x
                 mid_p1_local.y = mid_p0_local.y + tmp_vector.y
                 mid_p1_local.z = mid_p0_local.z + tmp_vector.z
@@ -399,7 +388,6 @@ class command_executed (adsk.core.CommandEventHandler):
                # make normal at end_point into sketch line and project it into end_sketch
                 end_p0_local = end_sketch.modelToSketchSpace (end_p0)
 
-                end_normal_point = adsk.core.Point3D.create()
                 end_normal_point.x = end_p0.x + end_normal.x
                 end_normal_point.y = end_p0.y + end_normal.y
                 end_normal_point.z = end_p0.z + end_normal.z
@@ -412,14 +400,12 @@ class command_executed (adsk.core.CommandEventHandler):
                 projected_end_normal = entities[0]
                 tmp_point.isReference = False
 
-
                 tmp_vector.x = projected_end_normal.geometry.x - end_p0_local.x
                 tmp_vector.y = projected_end_normal.geometry.y - end_p0_local.y
                 tmp_vector.z = projected_end_normal.geometry.z - end_p0_local.z
 
                 tmp_vector.scaleBy (tool_diameter / tmp_vector.length )
 
-                end_p1_local = adsk.core.Point3D.create()
                 end_p1_local.x = end_p0_local.x + tmp_vector.x
                 end_p1_local.y = end_p0_local.y + tmp_vector.y
                 end_p1_local.z = end_p0_local.z + tmp_vector.z
