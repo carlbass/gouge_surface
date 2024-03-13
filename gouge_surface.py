@@ -1,8 +1,5 @@
 # Author- Carl Bass
-# Description- make surface gouges
-
-# To Do
-# get loft to use rail
+# Description- make surface gouges of specified radius tapering at both ends
 
 import adsk.core, adsk.fusion, adsk.cam, traceback
 import os
@@ -24,7 +21,7 @@ def run(context):
     
     try:
 
-        # Find where the python file lives and look for the icons in the ./.resources folder
+        # Find where the python file lives and look for the icons in the ./resources folder
         python_file_folder = os.path.dirname(os.path.realpath(__file__))
         resource_folder = os.path.join (python_file_folder, 'resources')
         resource_folder =''
@@ -185,7 +182,7 @@ class command_executed (adsk.core.CommandEventHandler):
             # tmp_vector will be used to calculate distance along projected normals to define circle
             tmp_vector = adsk.core.Vector3D.create ()
 
-            # these points will be used in the calculate for each gouge; just allocate them once
+            # these points will be used in the calculation for each gouge; just allocate them once
             mid_p1 = adsk.core.Point3D.create ()                    
             start_normal_point = adsk.core.Point3D.create()
             mid_normal_point = adsk.core.Point3D.create()
@@ -197,7 +194,7 @@ class command_executed (adsk.core.CommandEventHandler):
 
             i = 0
             for spline in sketch_fixed_splines:
-                debug_print (f'Processing spline {i}')
+                debug_print (f'Creating toolpath {i}')
 
                 tmp_sketch = sketches.add (parent_component.xYConstructionPlane)
                 tmp_sketch.name = f'tmp sketch {i}'
@@ -275,14 +272,13 @@ class command_executed (adsk.core.CommandEventHandler):
                 else:
                     saved_rails.append (edge1.geometry.copy())
 
-                # need to ensure tangent point is on curve
-                # add the toolpath curve to the rail sketch
+                # add the toolpath curve to the rail sketch which will get processed later
                 toolpath = rail_sketch.sketchCurves.sketchFixedSplines.addByNurbsCurve (saved_rails[i])
 
-                # get rid of the surface loft
+                # get rid of the surface loft since we got the bottom curve which is all we needed
                 surface_loft_feature.deleteMe()
 
-                debug_print (f'Processing toolpath {i}')
+                debug_print (f'GOuging along toolpath {i}')
                 
                 # get the parametric endpoints
                 (status, start_p, end_p) = toolpath.evaluator.getParameterExtents()                    
@@ -350,13 +346,16 @@ class command_executed (adsk.core.CommandEventHandler):
 
                 tmp_vector.scaleBy (tool_diameter / tmp_vector.length )
 
+                # find point in sketch coordinates that is a tool diameter away from surface along the projected normal 
                 start_p1_local.x = start_p0_local.x + tmp_vector.x
                 start_p1_local.y = start_p0_local.y + tmp_vector.y
                 start_p1_local.z = start_p0_local.z + tmp_vector.z
 
                 start_sketch.sketchCurves.sketchCircles.addByTwoPoints (start_p0_local, start_p1_local)
 
-               # make normal at mid_point into sketch line and project it into mid_sketch
+                # do same thing for midpoint
+
+                # make normal at mid_point into sketch line and project it into mid_sketch
                 mid_p0_local = mid_sketch.modelToSketchSpace (mid_p0)
 
                 mid_normal_point.x = mid_p0.x + mid_normal.x
@@ -383,7 +382,9 @@ class command_executed (adsk.core.CommandEventHandler):
 
                 mid_sketch.sketchCurves.sketchCircles.addByTwoPoints (mid_p0_local, mid_p1_local)
 
-               # make normal at end_point into sketch line and project it into end_sketch
+                # and again at the other end of the curve
+               
+                # make normal at end_point into sketch line and project it into end_sketch
                 end_p0_local = end_sketch.modelToSketchSpace (end_p0)
 
                 end_normal_point.x = end_p0.x + end_normal.x
@@ -409,8 +410,6 @@ class command_executed (adsk.core.CommandEventHandler):
                 end_p1_local.z = end_p0_local.z + tmp_vector.z
 
                 end_sketch.sketchCurves.sketchCircles.addByTwoPoints (end_p0_local, end_p1_local)
-
-                tmp_sketch.deleteMe()
 
                 i = i + 1
             
@@ -459,13 +458,18 @@ class command_executed (adsk.core.CommandEventHandler):
                         debug_print (f'error: {error}')
                 
                 # clean up a little
+                tmp_sketch.deleteMe()
+
                 start_sketch.isVisible = False
                 mid_sketch.isVisible = False
                 end_sketch.isVisible = False
-                
+
                 i = i + 1
 
+            # clean up a little more
+            input_sketch.isVisible = False
             rail_sketch.isVisible = False
+
         except:
             ui.messageBox('Failed:\n{}'.format(traceback.format_exc()))	
 
@@ -482,7 +486,8 @@ def debug_print_point (msg, point):
         
 def stop(context):
     try:
-
+        global handlers
+        
         # Clean up the UI.
         command_definitions = ui.commandDefinitions.itemById('gouge_surface')
         if command_definitions:
